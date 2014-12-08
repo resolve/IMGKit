@@ -30,6 +30,14 @@ class IMGKit
     end
   end
 
+  class NullLogger < Logger
+    def initialize(*args)
+    end
+
+    def add(*args, &block)
+    end
+  end
+
   attr_accessor :source, :stylesheets
   attr_reader :options
 
@@ -40,6 +48,7 @@ class IMGKit
 
     @options = IMGKit.configuration.default_options.merge(options)
     @options.merge! find_options_in_meta(url_file_or_html) unless source.url?
+    @logger = @options.delete(:logger) { NullLogger.new }
 
     raise NoExecutableError.new unless File.exists?(IMGKit.configuration.wkhtmltoimage)
   end
@@ -105,8 +114,26 @@ class IMGKit
     set_format(format)
 
     opts = @source.html? ? {:stdin_data => @source.to_s} : {}
-    result, stderr = capture3(*(command + [opts]))
+    cmd = command + [opts]
+
+    cmd_without_stdin = cmd
+    cmd_without_stdin = cmd[0...-1] if Hash === cmd.last
+
+    run_ref = SecureRandom.hex
+    @logger.info "\nIMGKit (ref: #{run_ref}): Generating image with wkhtmltoimage command '#{cmd_without_stdin.join(' ')}'"
+
+    result, stderr, status = capture3(*cmd)
     result.force_encoding("ASCII-8BIT") if result.respond_to? :force_encoding
+
+    if stderr.size > 0
+      @logger.debug("IMGKit (ref: #{run_ref}): wkhtmltoimage output:\n" + stderr)
+    end
+
+    if status.success?
+      @logger.info("IMGKit (ref: #{run_ref}) wkhtmltoimage SUCCEEDED\n")
+    else
+      @logger.info("IMGKit (ref: #{run_ref}) wkhtmltoimage FAILED\n")
+    end
 
     raise CommandFailedError.new(command.join(' '), stderr) if result.size == 0
     result
